@@ -38,7 +38,7 @@ router.get("/", async (req, res) => {
       // ดึงห้องทั้งหมดใน property
       const [rooms] = await pool.execute(
         "SELECT id, price_monthly, price_term FROM rooms WHERE property_id = ?",
-        [p.id]
+        [p.id],
       );
 
       const total_rooms = rooms.length;
@@ -54,7 +54,7 @@ router.get("/", async (req, res) => {
       // ดึง rating เฉลี่ย
       const [ratingRows] = await pool.execute(
         "SELECT AVG(rating) AS avg_rating FROM reviews WHERE property_id = ?",
-        [p.id]
+        [p.id],
       );
       const rating =
         ratingRows[0].avg_rating !== null
@@ -64,17 +64,17 @@ router.get("/", async (req, res) => {
       // ดึงห้องที่ถูกจองแล้ว (ทั้ง pending และ confirmed)
       const [bookedRooms] = await pool.execute(
         `SELECT DISTINCT room_id 
-   FROM bookings 
+   FROM rents 
    WHERE status IN ('confirmed') 
      AND room_id IN (SELECT id FROM rooms WHERE property_id = ?)`,
-        [p.id]
+        [p.id],
       );
 
       const bookedRoomIds = bookedRooms.map((b) => b.room_id);
 
       // จำนวนห้องว่าง
       const available_rooms = rooms.filter(
-        (r) => !bookedRoomIds.includes(r.id)
+        (r) => !bookedRoomIds.includes(r.id),
       ).length;
 
       result.push({
@@ -142,7 +142,7 @@ router.get("/my", authMiddleware(["owner", "staff"]), async (req, res) => {
         SELECT p.*,
           (SELECT COUNT(*) FROM rooms r WHERE r.property_id = p.id) AS roomsCount,
           (SELECT COUNT(DISTINCT b.user_id) 
-           FROM bookings b 
+           FROM rents b 
            JOIN rooms r2 ON b.room_id = r2.id 
            WHERE r2.property_id = p.id AND b.status = 'confirmed') AS tenantsCount,
           (SELECT IFNULL(ROUND(AVG(r.rating),1),0) 
@@ -155,7 +155,7 @@ router.get("/my", authMiddleware(["owner", "staff"]), async (req, res) => {
         WHERE po.owner_id = ?
         ORDER BY p.id
         `,
-        [userId]
+        [userId],
       );
     } else if (role === "staff") {
       [rows] = await pool.execute(
@@ -163,7 +163,7 @@ router.get("/my", authMiddleware(["owner", "staff"]), async (req, res) => {
         SELECT p.*,
           (SELECT COUNT(*) FROM rooms r WHERE r.property_id = p.id) AS roomsCount,
           (SELECT COUNT(DISTINCT b.user_id) 
-           FROM bookings b 
+           FROM rents b 
            JOIN rooms r2 ON b.room_id = r2.id 
            WHERE r2.property_id = p.id AND b.status = 'confirmed') AS tenantsCount,
           (SELECT IFNULL(ROUND(AVG(r.rating),1),0) 
@@ -176,7 +176,7 @@ router.get("/my", authMiddleware(["owner", "staff"]), async (req, res) => {
         WHERE ps.staff_id = ?
         ORDER BY p.id
         `,
-        [userId]
+        [userId],
       );
     }
 
@@ -206,19 +206,19 @@ router.get(
           FROM reviews 
           WHERE property_id = p.id
         ) AS rating
-      FROM bookings b
+      FROM rents b
       JOIN rooms r ON r.id = b.room_id
       JOIN properties p ON p.id = r.property_id
       WHERE b.user_id = ? AND b.status = 'confirmed'
       `,
-        [userId]
+        [userId],
       );
       res.json(rows);
     } catch (err) {
       console.error(err);
       res.status(500).json({ message: err.message });
     }
-  }
+  },
 );
 // GET /api/properties/reviews/options - ดึงทุกหอ สำหรับ dropdown รีวิว
 router.get("/reviews/options", authMiddleware(["tenant"]), async (req, res) => {
@@ -238,7 +238,7 @@ router.get("/reviews/options", authMiddleware(["tenant"]), async (req, res) => {
         ) AS rating
       FROM properties p
       ORDER BY p.name ASC
-      `
+      `,
     );
     res.json(rows);
   } catch (err) {
@@ -246,7 +246,22 @@ router.get("/reviews/options", authMiddleware(["tenant"]), async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+// เช็คชื่อหอซ้ำ (สำหรับ create/edit)
+router.get("/check-name", async (req, res) => {
+  const { name, id } = req.query;
 
+  let query = `SELECT id FROM properties WHERE name = ?`;
+  let params = [name];
+
+  if (id) {
+    query += ` AND id != ?`;
+    params.push(id);
+  }
+
+  const [rows] = await pool.query(query, params);
+
+  res.json({ exists: rows.length > 0 });
+});
 // Get single property with all related data
 router.get("/:id", async (req, res) => {
   try {
@@ -255,7 +270,7 @@ router.get("/:id", async (req, res) => {
     // ข้อมูล property + owner(s)
     const [propRows] = await pool.execute(
       `SELECT p.* FROM properties p WHERE p.id = ?`,
-      [propertyId]
+      [propertyId],
     );
 
     if (!propRows.length) {
@@ -270,7 +285,7 @@ router.get("/:id", async (req, res) => {
        FROM property_owners po
        JOIN users u ON po.owner_id = u.id
        WHERE po.property_id = ?`,
-      [propertyId]
+      [propertyId],
     );
     property.owners = ownerRows;
 
@@ -279,7 +294,7 @@ router.get("/:id", async (req, res) => {
       `SELECT type, rate 
    FROM property_utilities 
    WHERE property_id = ?`,
-      [propertyId]
+      [propertyId],
     );
 
     // map ให้เข้า property.price_electric / property.price_water
@@ -299,16 +314,16 @@ router.get("/:id", async (req, res) => {
        LEFT JOIN room_images ri ON ri.room_id = r.id
        WHERE r.property_id = ?
        GROUP BY r.id`,
-      [propertyId]
+      [propertyId],
     );
 
     // ดึง booking ที่ยืนยันแล้วหรือรอดำเนินการของห้องทั้งหมด
     const [bookedRooms] = await pool.execute(
       `SELECT DISTINCT b.room_id
-      FROM bookings b
+      FROM rents b
       JOIN rooms r ON b.room_id = r.id
       WHERE r.property_id = ? AND b.status IN ('confirmed')`,
-      [propertyId]
+      [propertyId],
     );
     const bookedRoomIds = bookedRooms.map((br) => br.room_id);
 
@@ -316,7 +331,7 @@ router.get("/:id", async (req, res) => {
     const [maintenanceRows] = await pool.execute(
       `SELECT * FROM maintenance_requests 
        WHERE room_id IN (?) AND status != 'completed'`,
-      [roomRows.map((r) => r.id)]
+      [roomRows.map((r) => r.id)],
     );
 
     // แปลง images และสร้าง field status
@@ -347,7 +362,7 @@ router.get("/:id", async (req, res) => {
     // สิ่งอำนวยความสะดวก
     const [facilityRows] = await pool.execute(
       "SELECT * FROM property_facilities WHERE property_id=?",
-      [propertyId]
+      [propertyId],
     );
     property.facilities = facilityRows;
 
@@ -358,7 +373,7 @@ router.get("/:id", async (req, res) => {
        JOIN users u ON r.user_id = u.id
        WHERE r.property_id = ?
        ORDER BY r.created_at DESC`,
-      [propertyId]
+      [propertyId],
     );
     property.reviews = reviewRows;
 
@@ -374,7 +389,7 @@ router.get("/:id", async (req, res) => {
 
     // จำนวนห้องว่าง
     property.available_rooms = property.rooms.filter(
-      (room) => room.status === "available"
+      (room) => room.status === "available",
     ).length;
 
     // ราคาเริ่มต้น
@@ -397,14 +412,14 @@ router.get("/:id", async (req, res) => {
       FROM room_furnitures rf
       JOIN rooms r ON rf.room_id = r.id
       WHERE r.property_id = ?`,
-      [propertyId]
+      [propertyId],
     );
     // ผูกเฟอร์นิเจอร์เข้ากับแต่ละห้อง
     property.rooms = property.rooms.map((room) => {
       const furnitures = furnitureRows.filter((f) => f.room_id === room.id);
       return { ...room, furnitures };
     });
-    
+
     res.json(property);
   } catch (err) {
     console.error(err);
@@ -428,26 +443,25 @@ router.get("/:id/rooms", authMiddleware(["admin"]), async (req, res) => {
         r.price_term,
         r.has_ac,
         r.has_fan,
-        r.created_at,
         COALESCE(JSON_ARRAYAGG(ri.image_url), JSON_ARRAY()) AS images,
         (
           SELECT b.status 
-          FROM bookings b 
+          FROM rents b 
           WHERE b.room_id = r.id 
           AND b.status = 'confirmed'
-          ORDER BY b.created_at DESC 
+          ORDER BY b.start_date DESC 
           LIMIT 1
         ) AS booking_status,
         (
           SELECT b.billing_cycle
-          FROM bookings b
+          FROM rents b
           WHERE b.room_id = r.id
-          ORDER BY b.created_at DESC
+          ORDER BY b.start_date DESC
           LIMIT 1
         ) AS billing_cycle,
         (
           SELECT COUNT(*) 
-          FROM bookings b 
+          FROM rents b 
           WHERE b.room_id = r.id 
           AND b.status = 'pending'
         ) AS pending_bookings_count
@@ -457,7 +471,7 @@ router.get("/:id/rooms", authMiddleware(["admin"]), async (req, res) => {
       GROUP BY r.id
       ORDER BY r.id ASC
       `,
-      [id]
+      [id],
     );
 
     const result = rooms.map((r) => {
@@ -485,7 +499,6 @@ router.get("/:id/rooms", authMiddleware(["admin"]), async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
-
 // Create property by admin
 router.post(
   "/",
@@ -503,7 +516,7 @@ router.post(
       // 1. สร้าง property
       const [result] = await pool.execute(
         "INSERT INTO properties (name, address, description, image) VALUES (?,?,?,?)",
-        [name, address, description, image]
+        [name, address, description, image],
       );
 
       const propertyId = result.insertId;
@@ -512,12 +525,12 @@ router.post(
       for (let ownerId of owner_ids) {
         const [users] = await pool.execute(
           "SELECT id FROM users WHERE id = ? AND role = 'owner'",
-          [ownerId]
+          [ownerId],
         );
         if (users.length > 0) {
           await pool.execute(
             "INSERT INTO property_owners (property_id, owner_id) VALUES (?,?)",
-            [propertyId, ownerId]
+            [propertyId, ownerId],
           );
         }
       }
@@ -529,14 +542,14 @@ router.post(
         propertyId,
         `${
           req.user.username || "ไม่ทราบผู้ใช้"
-        } สร้างอสังหาริมทรัพย์ใหม่ ${name}`
+        } สร้างอสังหาริมทรัพย์ใหม่ ${name}`,
       );
 
       res.json({ message: "Property created", id: propertyId });
     } catch (err) {
       res.status(500).json({ message: err.message });
     }
-  }
+  },
 );
 // edit by admin
 router.put(
@@ -565,7 +578,7 @@ router.put(
       // update property
       await pool.execute(
         "UPDATE properties SET name=?, address=?, description=?, image=? WHERE id=?",
-        [name, address, description, image, propertyId]
+        [name, address, description, image, propertyId],
       );
 
       // เคลียร์เจ้าของเก่า
@@ -577,12 +590,12 @@ router.put(
       for (let ownerId of owner_ids) {
         const [users] = await pool.execute(
           "SELECT id FROM users WHERE id = ? AND role = 'owner'",
-          [ownerId]
+          [ownerId],
         );
         if (users.length > 0) {
           await pool.execute(
             "INSERT INTO property_owners (property_id, owner_id) VALUES (?,?)",
-            [propertyId, ownerId]
+            [propertyId, ownerId],
           );
         }
       }
@@ -592,16 +605,16 @@ router.put(
         "update_property",
         "property",
         propertyId,
-        `${req.user.username || "ไม่ทราบผู้ใช้"} อัปเดตอสังหาริมทรัพย์ ${name}`
+        `${req.user.username || "ไม่ทราบผู้ใช้"} อัปเดตอสังหาริมทรัพย์ ${name}`,
       );
 
       res.json({ message: "Property updated" });
     } catch (err) {
       res.status(500).json({ message: err.message });
     }
-  }
+  },
 );
-// เพิ่มอสังหาริมทรัพย์ + ค่าไฟ/ค่าน้ำ
+// เพิ่มอสังหาริมทรัพย์ + ค่าไฟ/ค่าน้ำ 
 router.post(
   "/add",
   authMiddleware(["owner"]),
@@ -620,23 +633,27 @@ router.post(
     try {
       await conn.beginTransaction();
 
+      // 1️⃣ insert property
       const [propertyResult] = await conn.execute(
-        `INSERT INTO properties (name, address, image, description, created_at)
-       VALUES (?, ?, ?, ?, NOW())`,
+        `INSERT INTO properties (name, address, image, description)
+         VALUES (?, ?, ?, ?)`,
         [name, address, imagePath, description]
       );
+
       const propertyId = propertyResult.insertId;
 
+      // 2️⃣ insert utilities
       await conn.execute(
-        `INSERT INTO property_utilities (property_id, type, rate, created_at) VALUES 
-      (?, 'electric', ?, NOW()), 
-      (?, 'water', ?, NOW())`,
+        `INSERT INTO property_utilities (property_id, type, rate) VALUES 
+         (?, 'electric', ?), 
+         (?, 'water', ?)`,
         [propertyId, electric_rate, propertyId, water_rate]
       );
 
+      // 3️⃣ insert owner relation
       await conn.execute(
-        `INSERT INTO property_owners (property_id, owner_id, created_at)
-       VALUES (?, ?, NOW())`,
+        `INSERT INTO property_owners (property_id, owner_id)
+         VALUES (?, ?)`,
         [propertyId, userId]
       );
 
@@ -649,10 +666,12 @@ router.post(
         propertyId,
         `${username || "ไม่ทราบผู้ใช้"} เพิ่มอสังหาริมทรัพย์ ${name}`
       );
+
       res.json({
         success: true,
         message: "เพิ่มอสังหาริมทรัพย์และผูกเจ้าของสำเร็จ",
       });
+
     } catch (err) {
       await conn.rollback();
       console.error(err);
@@ -684,7 +703,7 @@ router.put(
 
       const [checkOwner] = await conn.execute(
         `SELECT 1 FROM property_owners WHERE property_id=? AND owner_id=?`,
-        [propertyId, userId]
+        [propertyId, userId],
       );
       if (!checkOwner.length) {
         await conn.rollback();
@@ -695,16 +714,16 @@ router.put(
         `UPDATE properties 
        SET name=?, address=?, image=?, description=? 
        WHERE id=?`,
-        [name, address, imagePath, description, propertyId]
+        [name, address, imagePath, description, propertyId],
       );
 
       await conn.execute(
         `UPDATE property_utilities SET rate=? WHERE property_id=? AND type='electric'`,
-        [electric_rate, propertyId]
+        [electric_rate, propertyId],
       );
       await conn.execute(
         `UPDATE property_utilities SET rate=? WHERE property_id=? AND type='water'`,
-        [water_rate, propertyId]
+        [water_rate, propertyId],
       );
 
       await conn.commit();
@@ -714,7 +733,7 @@ router.put(
         "edit_property",
         "property",
         propertyId,
-        `${req.user.username || "ไม่ทราบผู้ใช้"} แก้ไขอสังหาริมทรัพย์ ${name}`
+        `${req.user.username || "ไม่ทราบผู้ใช้"} แก้ไขอสังหาริมทรัพย์ ${name}`,
       );
       res.json({ success: true, message: "แก้ไขอสังหาริมทรัพย์สำเร็จ" });
     } catch (err) {
@@ -724,7 +743,7 @@ router.put(
     } finally {
       conn.release();
     }
-  }
+  },
 );
 
 // Delete property และข้อมูลที่เกี่ยวข้องทั้งหมด (admin/owner)
@@ -735,7 +754,7 @@ router.delete("/:id", authMiddleware(["admin", "owner"]), async (req, res) => {
     // 1️⃣ เช็ค property
     const [[property]] = await pool.execute(
       "SELECT id, name FROM properties WHERE id=?",
-      [propertyId]
+      [propertyId],
     );
     if (!property) {
       return res.status(404).json({ message: "ไม่พบอสังหาริมทรัพย์" });
@@ -744,33 +763,36 @@ router.delete("/:id", authMiddleware(["admin", "owner"]), async (req, res) => {
     // 2️⃣ เช็คความเกี่ยวข้องทั้งหมด
     const checks = {};
 
-    const [[ownerCount]] = await pool.execute(
-      "SELECT COUNT(*) AS count FROM property_owners WHERE property_id=?",
-      [propertyId]
-    );
-    if (ownerCount.count > 0) checks.owners = ownerCount.count;
+    // ✅ เช็ค owners เฉพาะกรณีเป็น admin
+    if (req.user.role === "admin") {
+      const [[ownerCount]] = await pool.execute(
+        "SELECT COUNT(*) AS count FROM property_owners WHERE property_id=?",
+        [propertyId],
+      );
+      if (ownerCount.count > 0) checks.owners = ownerCount.count;
+    }
 
     const [[staffCount]] = await pool.execute(
       "SELECT COUNT(*) AS count FROM property_staff WHERE property_id=?",
-      [propertyId]
+      [propertyId],
     );
     if (staffCount.count > 0) checks.staff = staffCount.count;
 
     const [[roomCount]] = await pool.execute(
       "SELECT COUNT(*) AS count FROM rooms WHERE property_id=?",
-      [propertyId]
+      [propertyId],
     );
     if (roomCount.count > 0) checks.rooms = roomCount.count;
 
     const [[bookingCount]] = await pool.execute(
       `
-      SELECT COUNT(*) AS count
-      FROM bookings b
-      JOIN rooms r ON b.room_id = r.id
-      WHERE r.property_id = ?
-        AND b.status IN ('pending', 'confirmed')
-      `,
-      [propertyId]
+  SELECT COUNT(*) AS count
+  FROM rents b
+  JOIN rooms r ON b.room_id = r.id
+  WHERE r.property_id = ?
+    AND b.status IN ('pending', 'confirmed')
+  `,
+      [propertyId],
     );
     if (bookingCount.count > 0) checks.bookings = bookingCount.count;
 
@@ -805,7 +827,7 @@ router.delete("/:id", authMiddleware(["admin", "owner"]), async (req, res) => {
       "delete_property",
       "property",
       propertyId,
-      `${req.user.username} ลบอสังหาริมทรัพย์ ${property.name}`
+      `${req.user.username} ลบอสังหาริมทรัพย์ ${property.name}`,
     );
 
     res.json({ message: "ลบอสังหาริมทรัพย์สำเร็จ" });
@@ -814,6 +836,5 @@ router.delete("/:id", authMiddleware(["admin", "owner"]), async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
-
 
 module.exports = router;

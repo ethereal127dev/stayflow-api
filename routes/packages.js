@@ -23,10 +23,12 @@ router.get(
             pk.*,
             p.name AS property_name,
             p.address AS property_address,
-            u.fullname AS user_fullname
+            u.fullname AS user_fullname,
+            r.name AS room_name
           FROM packages pk
           JOIN properties p ON p.id = pk.property_id
           JOIN users u ON u.id = pk.user_id
+          LEFT JOIN rooms r ON r.id = pk.room_id
         `;
 
         if (role === "owner") {
@@ -71,7 +73,7 @@ router.get(
 // Create package (staff/owner)
 router.post("/", authMiddleware(["staff", "owner"]), async (req, res) => {
   try {
-    const { property_id, name, description, price, user_id } = req.body;
+    const { property_id, name, description, price, user_id, room_id } = req.body;
 
     console.log("Payload to /packages:", req.body);
 
@@ -83,9 +85,9 @@ router.post("/", authMiddleware(["staff", "owner"]), async (req, res) => {
 
     const [result] = await pool.execute(
       `INSERT INTO packages 
-        (property_id, name, description, price, user_id, created_at) 
-       VALUES (?, ?, ?, ?, ?, NOW())`,
-      [property_id, name, description || null, price || 0, user_id || null]
+      (property_id, room_id, name, description, price, user_id, created_at) 
+      VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+      [property_id, room_id || null, name, description || null, price || 0, user_id || null]
     );
 
     // console.log("Inserted package ID:", result.insertId);
@@ -117,11 +119,11 @@ router.post(
       const [[pkg]] = await pool.execute(
         `SELECT 
         pk.*, u.fullname, u.id_line,
-        r.name AS room_name, r.code AS room_code,
+        r.name AS room_name,
         p.name AS property_name
        FROM packages pk
        JOIN users u ON u.id = pk.user_id
-       LEFT JOIN bookings b ON b.user_id = u.id
+       LEFT JOIN rents b ON b.user_id = u.id
        LEFT JOIN rooms r ON r.id = b.room_id
        LEFT JOIN properties p ON p.id = pk.property_id
        WHERE pk.id = ?`,
@@ -148,7 +150,7 @@ router.post(
             },
             {
               type: "text",
-              text: `${pkg.property_name} • ห้อง ${pkg.room_name} (${pkg.room_code})`,
+              text: `${pkg.property_name} • ห้อง ${pkg.room_name}`,
               size: "sm",
               wrap: true,
               margin: "sm",
@@ -170,13 +172,6 @@ router.post(
             {
               type: "text",
               text: `รายละเอียด: ${pkg.description || "-"}`,
-              size: "sm",
-              wrap: true,
-              margin: "sm",
-            },
-            {
-              type: "text",
-              text: `ราคา: ${pkg.price || "-"}`,
               size: "sm",
               wrap: true,
               margin: "sm",
@@ -212,7 +207,7 @@ router.post(
 // Update package (staff/owner)
 router.put("/:id", authMiddleware(["staff", "owner"]), async (req, res) => {
   try {
-    const { name, description, price, user_id } = req.body;
+    const { name, description, price, user_id, room_id } = req.body;
 
     if (!user_id) {
       return res.status(400).json({ message: "ผู้รับพัสดุต้องถูกระบุ" });
@@ -220,9 +215,9 @@ router.put("/:id", authMiddleware(["staff", "owner"]), async (req, res) => {
 
     await pool.execute(
       `UPDATE packages 
-       SET name=?, description=?, price=?, user_id=? 
-       WHERE id=?`,
-      [name, description, price, user_id, req.params.id]
+      SET name=?, description=?, price=?, user_id=?, room_id=? 
+      WHERE id=?`,
+      [name, description, price, user_id, room_id || null, req.params.id]
     );
 
     await logActivity(

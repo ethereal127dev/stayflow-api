@@ -12,7 +12,8 @@ const fs = require("fs");
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadPath = path.join(__dirname, "../uploads/rooms");
-    if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath, { recursive: true });
+    if (!fs.existsSync(uploadPath))
+      fs.mkdirSync(uploadPath, { recursive: true });
     cb(null, uploadPath);
   },
   filename: (req, file, cb) => {
@@ -36,8 +37,8 @@ router.get("/my", authMiddleware(["owner", "staff"]), async (req, res) => {
       SELECT 
         r.id, 
         r.property_id, 
-        r.name, 
-        r.code, 
+        p.name AS property_name,
+        r.name,  
         r.description, 
         r.price_monthly, 
         r.price_term, 
@@ -46,25 +47,24 @@ router.get("/my", authMiddleware(["owner", "staff"]), async (req, res) => {
         COALESCE(JSON_ARRAYAGG(ri.image_url), JSON_ARRAY()) AS images,
         (
           SELECT b.billing_cycle 
-          FROM bookings b 
+          FROM rents b 
           WHERE b.room_id = r.id 
-          ORDER BY b.created_at DESC 
+          ORDER BY b.start_date DESC 
           LIMIT 1
         ) AS billing_cycle,
         (
           SELECT b.status 
-          FROM bookings b 
+          FROM rents b 
           WHERE b.room_id = r.id 
           ORDER BY b.end_date DESC 
           LIMIT 1
         ) AS latest_booking_status,
         (
           SELECT b.user_id 
-          FROM bookings b 
+          FROM rents b 
           WHERE b.room_id = r.id 
-          AND b.status = 'confirmed' 
-          AND NOW() BETWEEN b.start_date AND b.end_date 
-          ORDER BY b.start_date DESC 
+          AND b.status = 'confirmed'
+          ORDER BY b.start_date DESC
           LIMIT 1
         ) AS current_tenant_id,
         (
@@ -72,11 +72,10 @@ router.get("/my", authMiddleware(["owner", "staff"]), async (req, res) => {
           FROM users u 
           WHERE u.id = (
             SELECT b.user_id 
-            FROM bookings b 
+            FROM rents b 
             WHERE b.room_id = r.id 
-            AND b.status = 'confirmed' 
-            AND NOW() BETWEEN b.start_date AND b.end_date 
-            ORDER BY b.start_date DESC 
+            AND b.status = 'confirmed'
+            ORDER BY b.start_date DESC
             LIMIT 1
           )
         ) AS current_tenant_name,
@@ -87,6 +86,7 @@ router.get("/my", authMiddleware(["owner", "staff"]), async (req, res) => {
           AND m.status IN ('pending', 'in_progress')
         ) AS active_maintenance
       FROM rooms r 
+      JOIN properties p ON p.id = r.property_id
       LEFT JOIN room_images ri ON ri.room_id = r.id
     `;
 
@@ -155,17 +155,19 @@ router.get("/my", authMiddleware(["owner", "staff"]), async (req, res) => {
   }
 });
 // Get rooms ของ owner/staff ที่เกี่ยวข้องกับหอที่ตัวเองดูแล + สถานะห้องจริง
-router.get("/rooms/my", authMiddleware(["owner", "staff"]), async (req, res) => {
-  try {
-    const { id: userId, role } = req.user;
+router.get(
+  "/rooms/my",
+  authMiddleware(["owner", "staff"]),
+  async (req, res) => {
+    try {
+      const { id: userId, role } = req.user;
 
-    // SQL query สำหรับดึงข้อมูลห้องพัก พร้อม tenants ทุกคน
-    let baseQuery = `
+      // SQL query สำหรับดึงข้อมูลห้องพัก พร้อม tenants ทุกคน
+      let baseQuery = `
       SELECT 
         r.id, 
         r.property_id, 
         r.name, 
-        r.code, 
         r.description, 
         r.price_monthly, 
         r.price_term, 
@@ -175,16 +177,16 @@ router.get("/rooms/my", authMiddleware(["owner", "staff"]), async (req, res) => 
         COALESCE(JSON_ARRAYAGG(ri.image_url), JSON_ARRAY()) AS images,
         (
           SELECT b.billing_cycle 
-          FROM bookings b 
+          FROM rents b 
           WHERE b.room_id = r.id 
-          ORDER BY b.created_at DESC 
+          ORDER BY b.start_date DESC 
           LIMIT 1
         ) AS billing_cycle,
         (
           SELECT b.status
-          FROM bookings b
+          FROM rents b
           WHERE b.room_id = r.id
-          ORDER BY b.created_at DESC
+          ORDER BY b.start_date DESC
           LIMIT 1
         ) AS latest_booking_status,
         (
@@ -203,7 +205,7 @@ router.get("/rooms/my", authMiddleware(["owner", "staff"]), async (req, res) => 
               'endDate', b.end_date
             )
           ), JSON_ARRAY())
-          FROM bookings b
+          FROM rents b
           JOIN users u ON u.id = b.user_id
           WHERE b.room_id = r.id
         ) AS tenants
@@ -211,67 +213,76 @@ router.get("/rooms/my", authMiddleware(["owner", "staff"]), async (req, res) => 
       LEFT JOIN room_images ri ON ri.room_id = r.id
     `;
 
-    // เงื่อนไขสำหรับ owner/staff
-    if (role === "owner") {
-      baseQuery += `
+      // เงื่อนไขสำหรับ owner/staff
+      if (role === "owner") {
+        baseQuery += `
         JOIN property_owners po ON po.property_id = r.property_id
         WHERE po.owner_id = ?
       `;
-    } else {
-      baseQuery += `
+      } else {
+        baseQuery += `
         JOIN property_staff ps ON ps.property_id = r.property_id
         WHERE ps.staff_id = ?
       `;
-    }
+      }
 
-    baseQuery += `
+      baseQuery += `
       GROUP BY r.id
       ORDER BY r.id
     `;
 
-    // ดึงข้อมูล
-    const [rows] = await pool.execute(baseQuery, [userId]);
+      // ดึงข้อมูล
+      const [rows] = await pool.execute(baseQuery, [userId]);
 
-    // ประมวลผลข้อมูล
-    const processedRooms = rows.map((room) => {
-      let images = [];
-      try {
-        images = typeof room.images === "string" ? JSON.parse(room.images) : room.images;
-        images = images.filter((img) => img && img.trim() !== "");
-      } catch (e) {
-        images = [];
-      }
+      // ประมวลผลข้อมูล
+      const processedRooms = rows.map((room) => {
+        let images = [];
+        try {
+          images =
+            typeof room.images === "string"
+              ? JSON.parse(room.images)
+              : room.images;
+          images = images.filter((img) => img && img.trim() !== "");
+        } catch (e) {
+          images = [];
+        }
 
-      let tenants = [];
-      try {
-        tenants = typeof room.tenants === "string" ? JSON.parse(room.tenants) : room.tenants;
-      } catch (e) {
-        tenants = [];
-      }
+        let tenants = [];
+        try {
+          tenants =
+            typeof room.tenants === "string"
+              ? JSON.parse(room.tenants)
+              : room.tenants;
+        } catch (e) {
+          tenants = [];
+        }
 
-      const { latest_booking_status, active_maintenance } = room;
-      let status = "available";
-      if (active_maintenance > 0) status = "maintenance";
-      if (latest_booking_status === "confirmed") {
-        status = active_maintenance > 0 ? "occupied_maintenance" : "occupied";
-      } else if (latest_booking_status === "pending") {
-        status = active_maintenance > 0 ? "pending_maintenance" : "pending";
-      }
+        const { latest_booking_status, active_maintenance } = room;
+        let status = "available";
+        if (active_maintenance > 0) status = "maintenance";
+        if (latest_booking_status === "confirmed") {
+          status = active_maintenance > 0 ? "occupied_maintenance" : "occupied";
+        } else if (latest_booking_status === "pending") {
+          status = active_maintenance > 0 ? "pending_maintenance" : "pending";
+        }
 
-      return {
-        ...room,
-        images,
-        tenants,
-        status,
-      };
-    });
+        return {
+          ...room,
+          images,
+          tenants,
+          status,
+        };
+      });
 
-    res.json(processedRooms);
-  } catch (err) {
-    console.error("Error fetching rooms:", err);
-    res.status(500).json({ message: "An error occurred while fetching room data." });
-  }
-});
+      res.json(processedRooms);
+    } catch (err) {
+      console.error("Error fetching rooms:", err);
+      res
+        .status(500)
+        .json({ message: "An error occurred while fetching room data." });
+    }
+  },
+);
 // Get room by id
 router.get(
   "/:id",
@@ -283,7 +294,7 @@ router.get(
     if (!rows.length)
       return res.status(404).json({ message: "Room not found" });
     res.json(rows[0]);
-  }
+  },
 );
 // post room (admin/owner/staff)
 router.post(
@@ -294,7 +305,6 @@ router.post(
     const {
       property_id,
       name,
-      code,
       price_monthly,
       price_term,
       has_ac,
@@ -308,29 +318,31 @@ router.post(
 
     try {
       const [result] = await pool.execute(
-        "INSERT INTO rooms (property_id, name, code, price_monthly, price_term, has_ac, has_fan, deposit, description) VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO rooms (property_id, name, price_monthly, price_term, has_ac, has_fan, deposit, description) VALUES (?,?,?,?,?,?,?,?)",
         [
           property_id ?? null,
           name,
-          code ?? null,
-          price_monthly ?? null,
-          price_term ?? null,
+          price_monthly === "" ? null : price_monthly,
+          price_term === "" ? null : price_term,
           has_ac ?? 0,
           has_fan ?? 0,
-          deposit ?? null,
-          description ?? null,
-        ]
+          deposit === "" ? null : deposit,
+          description === "" ? null : description,
+        ],
       );
       const roomId = result.insertId;
 
       // 1️⃣ บันทึกรูปจาก URL
       if (images) {
-        const imageArray = images.split(",").map((img) => img.trim()).filter(Boolean);
+        const imageArray = images
+          .split(",")
+          .map((img) => img.trim())
+          .filter(Boolean);
         for (let imgUrl of imageArray) {
-          await pool.execute("INSERT INTO room_images (room_id, image_url) VALUES (?,?)", [
-            roomId,
-            imgUrl,
-          ]);
+          await pool.execute(
+            "INSERT INTO room_images (room_id, image_url) VALUES (?,?)",
+            [roomId, imgUrl],
+          );
         }
       }
 
@@ -338,10 +350,10 @@ router.post(
       if (req.files && req.files.length) {
         for (let file of req.files) {
           const filePath = `/uploads/rooms/${file.filename}`;
-          await pool.execute("INSERT INTO room_images (room_id, image_url) VALUES (?,?)", [
-            roomId,
-            filePath,
-          ]);
+          await pool.execute(
+            "INSERT INTO room_images (room_id, image_url) VALUES (?,?)",
+            [roomId, filePath],
+          );
         }
       }
 
@@ -350,7 +362,7 @@ router.post(
         "create_room",
         "room",
         roomId,
-        `${req.user.username || "ไม่ทราบผู้ใช้"} สร้างห้อง ${name}`
+        `${req.user.username || "ไม่ทราบผู้ใช้"} สร้างห้อง ${name}`,
       );
 
       res.json({ message: "Room created", id: roomId });
@@ -358,7 +370,7 @@ router.post(
       console.error(err);
       res.status(500).json({ message: err.message });
     }
-  }
+  },
 );
 // Update room (/owner/staff)
 router.put(
@@ -368,58 +380,89 @@ router.put(
   async (req, res) => {
     const {
       name,
-      code,
       price_monthly,
       price_term,
       has_ac,
       has_fan,
       description,
       deposit,
-      images, // URL string
+      existingImages: existingImagesBody, // 👈 รับจาก frontend
     } = req.body;
+
     const roomId = req.params.id;
 
     try {
+      // 1️⃣ อัปเดตข้อมูลห้อง
       await pool.execute(
-        "UPDATE rooms SET name=?, code=?, price_monthly=?, price_term=?, has_ac=?, has_fan=?, deposit=?, description=? WHERE id=?",
-        [name, code, price_monthly, price_term, has_ac, has_fan, deposit, description, roomId]
+        `UPDATE rooms 
+         SET name=?, price_monthly=?, price_term=?, 
+             has_ac=?, has_fan=?, deposit=?, description=? 
+         WHERE id=?`,
+        [
+          name,
+          price_monthly === "" ? null : price_monthly,
+          price_term === "" ? null : price_term,
+          has_ac ?? 0,
+          has_fan ?? 0,
+          deposit === "" ? null : deposit,
+          description === "" ? null : description,
+          roomId,
+        ],
       );
 
       let newImages = [];
 
-      // 1️⃣ รวม URL และไฟล์ใหม่เป็น array เดียว
-      if (images) {
-        newImages.push(...images.split(",").map((img) => img.trim()).filter(Boolean));
-      }
-      if (req.files && req.files.length) {
-        newImages.push(...req.files.map((file) => `/uploads/rooms/${file.filename}`));
-      }
-
-      // 2️⃣ ดึงรูปเดิมทั้งหมด
-      const [existingImages] = await pool.execute(
-        "SELECT image_url FROM room_images WHERE room_id=?",
-        [roomId]
-      );
-      const existingSet = new Set(existingImages.map((row) => row.image_url));
-      const newSet = new Set(newImages);
-
-      // ลบรูปที่ไม่อยู่ใน newImages
-      for (let img of existingImages) {
-        if (!newSet.has(img.image_url)) {
-          await pool.execute("DELETE FROM room_images WHERE room_id=? AND image_url=?", [
-            roomId,
-            img.image_url,
-          ]);
+      // 2️⃣ รูปเดิมที่ยังเหลือ (จาก frontend)
+      if (existingImagesBody) {
+        try {
+          const parsed = JSON.parse(existingImagesBody);
+          if (Array.isArray(parsed)) {
+            newImages.push(...parsed);
+          }
+        } catch (e) {
+          console.error("existingImages parse error:", e);
         }
       }
 
-      // เพิ่มรูปใหม่ที่ยังไม่มีใน DB
+      // 3️⃣ ไฟล์ใหม่ที่ upload
+      if (req.files && req.files.length) {
+        newImages.push(
+          ...req.files.map((file) => `/uploads/rooms/${file.filename}`),
+        );
+      }
+
+      // 4️⃣ ดึงรูปเดิมทั้งหมดจาก DB
+      const [existingImagesDB] = await pool.execute(
+        "SELECT image_url FROM room_images WHERE room_id=?",
+        [roomId],
+      );
+
+      const existingSet = new Set(existingImagesDB.map((row) => row.image_url));
+      const newSet = new Set(newImages);
+
+      // 5️⃣ ลบรูปที่ถูกลบออก
+      for (let img of existingImagesDB) {
+        if (!newSet.has(img.image_url)) {
+          await pool.execute(
+            "DELETE FROM room_images WHERE room_id=? AND image_url=?",
+            [roomId, img.image_url],
+          );
+
+          // ลบไฟล์จริง
+          const filePath = path.join(__dirname, "..", img.image_url);
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+          }
+        }
+      }
+
+      // 6️⃣ เพิ่มรูปใหม่ที่ยังไม่มี
       for (let imgUrl of newImages) {
         if (!existingSet.has(imgUrl)) {
-          await pool.execute("INSERT INTO room_images (room_id, image_url) VALUES (?,?)", [
-            roomId,
-            imgUrl,
-          ]);
+          await pool.execute(
+            "INSERT INTO room_images (room_id, image_url) VALUES (?,?)",
+            [roomId, imgUrl],
+          );
         }
       }
 
@@ -428,7 +471,7 @@ router.put(
         "update_room",
         "room",
         roomId,
-        `${req.user.username || "ไม่ทราบผู้ใช้"} อัปเดตห้อง ${name}`
+        `${req.user.username || "ไม่ทราบผู้ใช้"} อัปเดตห้อง ${name}`,
       );
 
       res.json({ message: "Room updated" });
@@ -436,68 +479,70 @@ router.put(
       console.error(err);
       res.status(500).json({ message: err.message });
     }
-  }
+  },
 );
-
 // Delete room (admin/owner/staff)
-router.delete("/:id", authMiddleware(["admin","owner","staff"]), async (req, res) => {
-  const roomId = req.params.id;
+router.delete(
+  "/:id",
+  authMiddleware(["admin", "owner", "staff"]),
+  async (req, res) => {
+    const roomId = req.params.id;
 
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
 
-    // เช็คว่าห้องมีอยู่ไหม
-    const [roomRows] = await connection.execute(
-      "SELECT name FROM rooms WHERE id=?",
-      [roomId]
-    );
+      // เช็คว่าห้องมีอยู่ไหม
+      const [roomRows] = await connection.execute(
+        "SELECT name FROM rooms WHERE id=?",
+        [roomId],
+      );
 
-    if (roomRows.length === 0) {
-      await connection.rollback();
-      return res.status(404).json({ message: "Room not found" });
-    }
+      if (roomRows.length === 0) {
+        await connection.rollback();
+        return res.status(404).json({ message: "Room not found" });
+      }
 
-    const roomName = roomRows[0].name;
+      const roomName = roomRows[0].name;
 
-    // ✅ เช็คว่ามี booking ที่ยัง active ไหม
-    const [bookingRows] = await connection.execute(
-      `SELECT id FROM bookings 
+      // ✅ เช็คว่ามี booking ที่ยัง active ไหม
+      const [bookingRows] = await connection.execute(
+        `SELECT id FROM rents 
        WHERE room_id = ? 
        AND status IN ('pending','confirmed')`,
-      [roomId]
-    );
+        [roomId],
+      );
 
-    if (bookingRows.length > 0) {
+      if (bookingRows.length > 0) {
+        await connection.rollback();
+        return res.status(400).json({
+          message: "ไม่สามารถลบห้องได้ เนื่องจากมีการเช่าอยู่",
+        });
+      }
+
+      // ลบห้อง
+      await connection.execute("DELETE FROM rooms WHERE id=?", [roomId]);
+
+      // log activity
+      await logActivity(
+        req.user.id,
+        "delete_room",
+        "room",
+        roomId,
+        `${req.user.username || "ไม่ทราบผู้ใช้"} ลบห้อง ${roomName}`,
+      );
+
+      await connection.commit();
+
+      res.json({ message: "ลบข้อมูลห้องพักสำเร็จ" });
+    } catch (err) {
       await connection.rollback();
-      return res.status(400).json({
-        message: "ไม่สามารถลบห้องได้ เนื่องจากมีการเช่าอยู่"
-      });
+      console.error(err);
+      res.status(500).json({ message: err.message });
+    } finally {
+      connection.release();
     }
-
-    // ลบห้อง
-    await connection.execute("DELETE FROM rooms WHERE id=?", [roomId]);
-
-    // log activity
-    await logActivity(
-      req.user.id,
-      "delete_room",
-      "room",
-      roomId,
-      `${req.user.username || "ไม่ทราบผู้ใช้"} ลบห้อง ${roomName}`
-    );
-
-    await connection.commit();
-
-    res.json({ message: "ลบข้อมูลห้องพักสำเร็จ" });
-
-  } catch (err) {
-    await connection.rollback();
-    console.error(err);
-    res.status(500).json({ message: err.message });
-  } finally {
-    connection.release();
-  }
-});
+  },
+);
 
 module.exports = router;

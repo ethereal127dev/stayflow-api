@@ -14,7 +14,6 @@ router.get("/prices", authMiddleware(["owner", "staff"]), async (req, res) => {
       SELECT 
         r.id AS room_id,
         r.name,
-        r.code,
         r.price_monthly,
         r.price_term,
         r.deposit,
@@ -26,7 +25,7 @@ router.get("/prices", authMiddleware(["owner", "staff"]), async (req, res) => {
         bl.status AS bill_status
       FROM rooms r
       JOIN properties p ON p.id = r.property_id
-      JOIN bookings b ON b.room_id = r.id AND b.status='confirmed'
+      JOIN rents b ON b.room_id = r.id AND b.status='confirmed'
       JOIN users u ON u.id = b.user_id
       LEFT JOIN bills bl ON bl.booking_id = b.id
     `;
@@ -90,7 +89,7 @@ router.post("/add", async (req, res) => {
     // ดึงข้อมูล booking + room + property
     const [[booking]] = await pool.execute(
       `SELECT b.billing_cycle, b.room_id, r.price_monthly, r.price_term, p.id AS property_id
-       FROM bookings b
+       FROM rents b
        JOIN rooms r ON r.id = b.room_id
        JOIN properties p ON p.id = r.property_id
        WHERE b.id = ?`,
@@ -163,10 +162,10 @@ router.post("/send/:id", async (req, res) => {
         b.id, b.total_amount, b.room_price, b.water_units, b.electric_units, 
         b.other_charges, b.note, b.billing_date,
         u.fullname, u.id_line,
-        r.name AS room_name, r.code AS room_code,
+        r.name AS room_name,
         p.name AS property_name, p.id AS property_id
       FROM bills b
-      JOIN bookings bk ON bk.id = b.booking_id
+      JOIN rents bk ON bk.id = b.booking_id
       JOIN users u ON u.id = bk.user_id
       JOIN rooms r ON r.id = bk.room_id
       JOIN properties p ON p.id = r.property_id
@@ -218,7 +217,7 @@ router.post("/send/:id", async (req, res) => {
           },
           {
             type: "text",
-            text: `${bill.property_name} • ห้อง ${bill.room_name} (${bill.room_code})`,
+            text: `${bill.property_name} • ห้อง ${bill.room_name}`,
             size: "sm",
             color: "#555555",
             margin: "sm",
@@ -356,7 +355,7 @@ router.post("/send/:id", async (req, res) => {
           },
           {
             type: "text",
-            text: "✅ ชำระแล้วกรุณายืนยันในระบบ",
+            text: "📌 กรุณาชำระเงินที่เคาน์เตอร์ และตรวจสอบสถานะในระบบอีกครั้ง",
             size: "sm",
             color: "#1976d2",
             wrap: true,
@@ -408,7 +407,7 @@ router.put("/:id", async (req, res) => {
     // ดึงข้อมูล booking + room + property
     const [[booking]] = await pool.execute(
       `SELECT b.billing_cycle, b.room_id, r.price_monthly, r.price_term, p.id AS property_id
-       FROM bookings b
+       FROM rents b
        JOIN rooms r ON r.id = b.room_id
        JOIN properties p ON p.id = r.property_id
        WHERE b.id = ?`,
@@ -449,7 +448,7 @@ router.put("/:id", async (req, res) => {
     // อัปเดตบิล
     const [result] = await pool.execute(
       `UPDATE bills 
-       SET booking_id=?, billing_cycle=?, room_price=?, water_units=?, electric_units=?, other_charges=?, note=?, total_amount=?,status='unpaid', paid_at=NULL, updated_at=NOW() 
+       SET booking_id=?, billing_cycle=?, room_price=?, water_units=?, electric_units=?, other_charges=?, note=?, total_amount=?,status='unpaid', paid_at=NULL, billing_date=NOW() 
        WHERE id=?`,
       [
         booking_id,
@@ -481,7 +480,7 @@ router.put("/confirm/:id", async (req, res) => {
 
     const [result] = await pool.execute(
       `UPDATE bills 
-       SET status='paid', created_at=NOW()
+       SET status='paid', paid_at=NOW()
        WHERE id=?`,
       [billId]
     );

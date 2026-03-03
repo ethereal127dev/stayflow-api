@@ -8,20 +8,19 @@ const { logActivity } = require("../helpers/activity");
 // get staff
 router.get("/", authMiddleware(["owner", "staff"]), async (req, res) => {
   const ownerId = req.user.id;
-  const { showGuest } = req.query;
-  const showGuestFlag = showGuest === "true";
 
   try {
-    let query = `
+    const query = `
       SELECT u.id, u.username, u.fullname, u.email, u.phone, u.line AS id_line,
-             u.profile_image, u.created_at, p.id AS property_id, p.name AS property_name, u.role
+             u.profile_image, p.id AS property_id, p.name AS property_name, u.role
       FROM users u
       LEFT JOIN property_staff ps ON ps.staff_id = u.id
       LEFT JOIN property_owners po ON po.property_id = ps.property_id
       LEFT JOIN properties p ON p.id = ps.property_id
-      WHERE (u.role = 'staff' ${showGuestFlag ? "OR u.role = 'guest'" : ""})
-        AND (po.owner_id = ? OR u.role = 'guest')
+      WHERE u.role = 'staff'
+        AND po.owner_id = ?
     `;
+
     const [rows] = await pool.execute(query, [ownerId]);
 
     const staffMap = {};
@@ -35,14 +34,13 @@ router.get("/", authMiddleware(["owner", "staff"]), async (req, res) => {
           phone: r.phone,
           id_line: r.id_line,
           profile_image: r.profile_image,
-          created_at: r.created_at,
           role: r.role,
           properties: [],
           property_names: [],
         };
       }
+
       if (r.property_id) {
-        // เพิ่ม check ก่อน push
         staffMap[r.id].properties.push({
           id: r.property_id,
           name: r.property_name,
@@ -50,16 +48,16 @@ router.get("/", authMiddleware(["owner", "staff"]), async (req, res) => {
         staffMap[r.id].property_names.push(r.property_name);
       }
     });
-    // แปลงเป็น array แล้วเรียงตาม created_at DESC
-    const staffList = Object.values(staffMap).sort(
-      (a, b) => new Date(b.created_at) - new Date(a.created_at)
-    );
-    res.json(Object.values(staffList));
+
+    const staffList = Object.values(staffMap).sort((a, b) => b.id - a.id);
+
+    res.json(staffList);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: err.message });
   }
 });
+
 // get property
 router.get("/my", authMiddleware(["owner", "staff"]), async (req, res) => {
   const ownerId = req.user.id;
@@ -67,7 +65,7 @@ router.get("/my", authMiddleware(["owner", "staff"]), async (req, res) => {
     const [rows] = await pool.execute(
       `
       SELECT u.id, u.username, u.fullname, u.email, u.phone, u.id_line,
-             u.profile_image, u.created_at, p.id AS property_id, p.name AS property_name
+             u.profile_image, p.id AS property_id, p.name AS property_name
       FROM users u
       INNER JOIN property_staff ps ON ps.staff_id = u.id
       INNER JOIN property_owners po ON po.property_id = ps.property_id
@@ -75,7 +73,7 @@ router.get("/my", authMiddleware(["owner", "staff"]), async (req, res) => {
       WHERE u.role = 'staff' AND po.owner_id = ?
       ORDER BY u.id, p.id
     `,
-      [ownerId]
+      [ownerId],
     );
 
     // จัด group staff แต่รวม properties เป็น array
@@ -90,7 +88,6 @@ router.get("/my", authMiddleware(["owner", "staff"]), async (req, res) => {
           phone: r.phone,
           id_line: r.id_line,
           profile_image: r.profile_image,
-          created_at: r.created_at,
           properties: [],
           property_names: [], // เพิ่ม field สำหรับชื่อหอ
         };
@@ -151,7 +148,7 @@ router.get(
     } catch (err) {
       res.status(500).json({ message: err.message });
     }
-  }
+  },
 );
 // ตรวจสอบ email แบบเรียลไทม์
 router.get(
@@ -196,7 +193,7 @@ router.get(
     } catch (err) {
       res.status(500).json({ message: err.message });
     }
-  }
+  },
 );
 // POST เพิ่ม staff ให้หอของ owner
 router.post("/", authMiddleware(["owner"]), async (req, res) => {
@@ -215,7 +212,7 @@ router.post("/", authMiddleware(["owner"]), async (req, res) => {
     // ตรวจสอบ username ซ้ำ
     const [usernameExist] = await pool.execute(
       "SELECT id FROM users WHERE username = ? AND role = 'staff'",
-      [username]
+      [username],
     );
 
     if (usernameExist.length > 0) {
@@ -226,7 +223,7 @@ router.post("/", authMiddleware(["owner"]), async (req, res) => {
     const password_hash = await bcrypt.hash(password, 10);
     const [result] = await pool.execute(
       "INSERT INTO users (username, fullname, email, phone, id_line, profile_image, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, 'staff', ?, NOW())",
-      [username, fullname, email, phone, id_line, profile_image, password_hash]
+      [username, fullname, email, phone, id_line, profile_image, password_hash],
     );
 
     const staffId = result.insertId;
@@ -236,7 +233,7 @@ router.post("/", authMiddleware(["owner"]), async (req, res) => {
       const values = property_ids.map((pid) => [pid, staffId, new Date()]);
       await pool.query(
         "INSERT INTO property_staff (property_id, staff_id, created_at) VALUES ?",
-        [values]
+        [values],
       );
     }
 
@@ -247,7 +244,7 @@ router.post("/", authMiddleware(["owner"]), async (req, res) => {
       staffId, // id ของ staff ที่ถูกเพิ่ม
       `${
         req.user.username || "ไม่ทราบผู้ใช้"
-      } เพิ่มพนักงาน ${fullname} (${username})`
+      } เพิ่มพนักงาน ${fullname} (${username})`,
     );
 
     res.json({ message: "Staff added", id: staffId });
@@ -278,7 +275,7 @@ router.put("/:id", authMiddleware(["owner"]), async (req, res) => {
        LEFT JOIN property_staff ps ON ps.staff_id = u.id
        LEFT JOIN property_owners po ON po.property_id = ps.property_id
        WHERE u.id = ? AND (po.owner_id = ? OR u.role = 'guest')`,
-      [id, ownerId]
+      [id, ownerId],
     );
 
     if (!rows.length) return res.status(403).json({ message: "Forbidden" });
@@ -288,7 +285,7 @@ router.put("/:id", authMiddleware(["owner"]), async (req, res) => {
     // ตรวจสอบ username ซ้ำ (ยกเว้นตัวเอง)
     const [usernameExist] = await pool.execute(
       "SELECT id FROM users WHERE username = ? AND id != ?",
-      [username, id]
+      [username, id],
     );
 
     if (usernameExist.length > 0) {
@@ -328,7 +325,7 @@ router.put("/:id", authMiddleware(["owner"]), async (req, res) => {
       const values = property_ids.map((pid) => [pid, id, new Date()]);
       await pool.query(
         "INSERT INTO property_staff (property_id, staff_id, created_at) VALUES ?",
-        [values]
+        [values],
       );
     }
 
@@ -339,7 +336,7 @@ router.put("/:id", authMiddleware(["owner"]), async (req, res) => {
       id, // staff ที่ถูกแก้ไข
       `${
         req.user.username || "ไม่ทราบผู้ใช้"
-      } แก้ไขข้อมูลพนักงาน ${fullname} (${username})`
+      } แก้ไขข้อมูลพนักงาน ${fullname} (${username})`,
     );
 
     res.json({ message: "Updated" });
@@ -363,7 +360,7 @@ router.delete("/:id", authMiddleware(["owner", "admin"]), async (req, res) => {
          FROM property_staff ps
          INNER JOIN property_owners po ON po.property_id = ps.property_id
          WHERE ps.staff_id = ? AND po.owner_id = ?`,
-        [id, requesterId]
+        [id, requesterId],
       );
 
       if (!rows.length) {

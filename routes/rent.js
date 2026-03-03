@@ -12,9 +12,9 @@ router.get("/", authMiddleware(["tenant"]), async (req, res) => {
     // ดึง booking ของ tenant ที่ยัง active
     const [bookings] = await pool.execute(
       `SELECT b.id AS booking_id, b.room_id, b.billing_cycle, b.start_date, b.end_date,
-              r.name AS room_name, r.code AS room_code,
+              r.name AS room_name,
               p.name AS property_name, p.address AS property_address
-       FROM bookings b
+       FROM rents b
        JOIN rooms r ON r.id = b.room_id
        JOIN properties p ON p.id = r.property_id
        WHERE b.user_id = ? AND b.status = 'confirmed'
@@ -54,7 +54,6 @@ router.get("/", authMiddleware(["tenant"]), async (req, res) => {
         rentData.push({
           booking_id: bk.booking_id,
           room_name: bk.room_name,
-          room_code: bk.room_code,
           property_name: bk.property_name,
           property_address: bk.property_address,
           billing_cycle: bk.billing_cycle,

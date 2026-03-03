@@ -22,7 +22,6 @@ router.get("/", authMiddleware(["owner", "staff"]), async (req, res) => {
         u.username,
         u.fullname,
         r.name AS room_name,
-        r.code AS room_code,
         p.id AS property_id,
         p.name AS property_name
       FROM maintenance_requests mr
@@ -95,7 +94,7 @@ router.get("/tenant/rooms", authMiddleware(["tenant"]), async (req, res) => {
     const [rows] = await pool.execute(
       `
       SELECT r.id AS room_id, r.name AS room_name, r.property_id
-      FROM bookings b
+      FROM rents b
       JOIN rooms r ON r.id = b.room_id
       WHERE b.user_id = ? AND b.status = 'confirmed'
       `,

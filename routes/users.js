@@ -29,7 +29,7 @@ const upload = multer({ storage });
 router.get("/", authMiddleware(["admin"]), async (req, res) => {
   try {
     const [users] = await pool.execute(`
-      SELECT id, username, fullname, email, profile_image, role, created_at
+      SELECT id, username, fullname, email, profile_image, role
       FROM users
       ORDER BY FIELD(role, 'admin', 'owner', 'staff', 'tenant', 'guest'), id
     `);
@@ -42,7 +42,7 @@ router.get("/", authMiddleware(["admin"]), async (req, res) => {
     if (userIds.length) {
       // Owner properties
       [ownerProps] = await pool.query(
-        `SELECT u.id AS user_id, p.id AS prop_id, p.name, p.image, p.created_at
+        `SELECT u.id AS user_id, p.id AS prop_id, p.name, p.image
          FROM property_owners po
          JOIN properties p ON p.id = po.property_id
          JOIN users u ON u.id = po.owner_id
@@ -52,7 +52,7 @@ router.get("/", authMiddleware(["admin"]), async (req, res) => {
 
       // Staff properties
       [staffProps] = await pool.query(
-        `SELECT u.id AS user_id, p.id AS prop_id, p.name, p.image, p.created_at
+        `SELECT u.id AS user_id, p.id AS prop_id, p.name, p.image
          FROM property_staff ps
          JOIN properties p ON p.id = ps.property_id
          JOIN users u ON u.id = ps.staff_id
@@ -70,12 +70,11 @@ router.get("/", authMiddleware(["admin"]), async (req, res) => {
      b.end_date,
      r.id AS room_id,
      r.name AS room_name,
-     r.code AS room_code,
      p.id AS property_id,
      p.name AS property_name,
      p.image AS property_image
    FROM users u
-   JOIN bookings b ON b.user_id = u.id
+   JOIN rents b ON b.user_id = u.id
    JOIN rooms r ON r.id = b.room_id
    JOIN properties p ON p.id = r.property_id
    WHERE u.role = 'tenant' AND u.id IN (?)`,
@@ -91,7 +90,6 @@ router.get("/", authMiddleware(["admin"]), async (req, res) => {
             id: p.prop_id,
             name: p.name,
             image: p.image,
-            created_at: p.created_at,
             role: "owner",
           })),
         ...staffProps
@@ -100,7 +98,6 @@ router.get("/", authMiddleware(["admin"]), async (req, res) => {
             id: p.prop_id,
             name: p.name,
             image: p.image,
-            created_at: p.created_at,
             role: "staff",
           })),
       ];
@@ -130,7 +127,6 @@ router.get("/", authMiddleware(["admin"]), async (req, res) => {
               end_date: b.end_date,
               id: b.room_id,
               name: b.room_name,
-              code: b.room_code,
               status: b.room_status,
             });
           });
@@ -202,7 +198,7 @@ router.get(
           `
         SELECT DISTINCT u.id, u.fullname
         FROM users u
-        JOIN bookings b ON b.user_id = u.id
+        JOIN rents b ON b.user_id = u.id
         JOIN rooms r ON r.id = b.room_id
         JOIN properties p ON p.id = r.property_id
         JOIN property_owners po ON po.property_id = p.id
@@ -215,7 +211,7 @@ router.get(
           `
         SELECT DISTINCT u.id, u.fullname
         FROM users u
-        JOIN bookings b ON b.user_id = u.id
+        JOIN rents b ON b.user_id = u.id
         JOIN rooms r ON r.id = b.room_id
         JOIN properties p ON p.id = r.property_id
         JOIN property_staff ps ON ps.property_id = p.id
@@ -240,7 +236,7 @@ router.get("/:id", authMiddleware(), async (req, res) => {
   const { id } = req.params;
   try {
     const [rows] = await pool.execute(
-      `SELECT id, username, fullname, email, line, id_line, phone, age, role, profile_image 
+      `SELECT id, username, fullname, email, line, id_line, phone, role, profile_image 
        FROM users WHERE id=?`,
       [id]
     );
@@ -273,9 +269,9 @@ router.get(
         `SELECT p.id, p.name
          FROM properties p
          JOIN rooms r ON r.property_id = p.id
-         JOIN bookings b ON b.room_id = r.id
+         JOIN rents b ON b.room_id = r.id
          WHERE b.user_id = ?
-         ORDER BY b.created_at DESC
+         ORDER BY b.start_date DESC
          LIMIT 1`,
         [userId]
       );
@@ -572,7 +568,7 @@ router.put("/:id", authMiddleware(["admin"]), async (req, res) => {
 
       for (const property_id of property_ids) {
         await pool.execute(
-          `INSERT IGNORE INTO ${table} (property_id, ${column}, created_at) VALUES (?, ?, NOW())`,
+          `INSERT IGNORE INTO ${table} (property_id, ${column}) VALUES (?, ?)`,
           [property_id, id]
         );
       }
@@ -644,7 +640,7 @@ router.delete("/:id", authMiddleware(["admin"]), async (req, res) => {
       const [[{ count }]] = await connection.execute(
         `
         SELECT COUNT(*) AS count
-        FROM bookings
+        FROM rents
         WHERE user_id = ?
           AND status IN ('pending', 'confirmed')
         `,

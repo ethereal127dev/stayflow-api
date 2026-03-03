@@ -21,28 +21,24 @@ router.get("/", authMiddleware(["owner", "staff"]), async (req, res) => {
         u.phone,
         u.id_line,
         u.line,
-        u.age,
         u.role,
         u.profile_image,
-        u.created_at AS user_created_at,
         p.id AS property_id,
         p.name AS property_name,
         p.address AS property_address,
         r.id AS room_id,
         r.name AS room_name,
-        r.code AS room_code,
         b.id AS booking_id,
         b.billing_cycle, 
         b.start_date,
         b.end_date,
-        b.created_at AS booking_created_at,
         b.status
       FROM users u
-      JOIN bookings b ON u.id = b.user_id
+      JOIN rents b ON u.id = b.user_id
       JOIN rooms r ON b.room_id = r.id
       JOIN properties p ON r.property_id = p.id
-      WHERE u.role IN ('tenant', 'guest')
-      AND b.status IN ('pending', 'confirmed')
+      WHERE u.role = 'tenant'
+      AND b.status IN ('confirmed', 'cancelled')
       AND (
         EXISTS (
           SELECT 1 FROM property_owners po
@@ -87,10 +83,8 @@ router.get("/", authMiddleware(["owner", "staff"]), async (req, res) => {
           phone: row.phone,
           id_line: row.id_line,
           line: row.line,
-          age: row.age,
           role: row.role,
           profile_image: row.profile_image,
-          created_at: row.user_created_at,
           bookings: [],
         });
       }
@@ -110,10 +104,8 @@ router.get("/", authMiddleware(["owner", "staff"]), async (req, res) => {
             property_address: row.property_address,
             room_id: row.room_id,
             room_name: row.room_name,
-            room_code: row.room_code,
             start_date: row.start_date,
             end_date: row.end_date,
-            created_at: row.booking_created_at,
             status: row.status,
             billing_cycle: row.billing_cycle,
           });
@@ -161,7 +153,7 @@ router.post("/", authMiddleware(["owner", "staff"]), async (req, res) => {
 
     // Create tenant user
     const [userResult] = await connection.execute(
-      "INSERT INTO users (username, fullname, password_hash, role, created_at) VALUES (?, ?, ?, 'tenant', NOW())",
+      "INSERT INTO users (username, fullname, password_hash, role) VALUES (?, ?, ?, 'tenant')",
       [username, fullname, hashedPassword]
     );
     const tenantId = userResult.insertId;
@@ -192,7 +184,7 @@ router.post("/", authMiddleware(["owner", "staff"]), async (req, res) => {
 
       // ตรวจสอบว่าห้องถูกจองแล้วหรือยัง
       const [existingBooking] = await connection.execute(
-        `SELECT * FROM bookings 
+        `SELECT * FROM rents 
          WHERE room_id = ? AND status = 'confirmed' 
            AND NOT (end_date < ? OR start_date > ?)`,
 
@@ -205,9 +197,9 @@ router.post("/", authMiddleware(["owner", "staff"]), async (req, res) => {
 
       // Insert booking
       await connection.execute(
-        `INSERT INTO bookings 
-        (user_id, room_id, status, start_date, end_date, billing_cycle, created_at) 
-        VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+        `INSERT INTO rents 
+        (user_id, room_id, status, start_date, end_date, billing_cycle) 
+        VALUES (?, ?, ?, ?, ?, ?)`,
         [
           tenantId,
           roomId,
@@ -285,7 +277,7 @@ router.put("/:id", authMiddleware(["owner", "staff"]), async (req, res) => {
     const bookingStatus = status || "confirmed";
 
     // 2️⃣ เคลียร์ booking เก่าของ tenant
-    await connection.execute("DELETE FROM bookings WHERE user_id = ?", [id]);
+    await connection.execute("DELETE FROM rents WHERE user_id = ?", [id]);
 
     // 3️⃣ Insert booking ใหม่สำหรับทุกห้อง
     for (let i = 0; i < room_ids.length; i++) {
@@ -317,9 +309,9 @@ router.put("/:id", authMiddleware(["owner", "staff"]), async (req, res) => {
 
       // Insert booking ใหม่
       await connection.execute(
-        `INSERT INTO bookings 
-        (user_id, room_id, status, start_date, end_date, billing_cycle, created_at) 
-        VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+        `INSERT INTO rents 
+        (user_id, room_id, status, start_date, end_date, billing_cycle) 
+        VALUES (?, ?, ?, ?, ?, ?)`,
         [
           id,
           roomId,
@@ -349,19 +341,36 @@ router.put("/:id", authMiddleware(["owner", "staff"]), async (req, res) => {
   }
 });
 
-// DELETE tenant
+// DELETE tenant 
 router.delete("/:id", authMiddleware(["owner", "staff"]), async (req, res) => {
   const { id } = req.params;
-  const user = req.user; // ดึงข้อมูลผู้ที่ทำรายการ (owner หรือ staff)
+  const user = req.user;
 
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
 
-    // ✅ ลบข้อมูลการจอง (bookings)
-    await connection.execute("DELETE FROM bookings WHERE user_id = ?", [id]);
+    // ✅ ตรวจสอบว่ามี booking ที่ยังไม่ถูกยกเลิกหรือไม่
+    const [activeBookings] = await connection.execute(
+      `
+      SELECT id 
+      FROM bookings 
+      WHERE user_id = ? 
+      AND status != 'cancelled'
+      LIMIT 1
+      `,
+      [id]
+    );
 
-    // ✅ ลบผู้เช่าที่มี role = 'tenant'
+    // ❌ ถ้ายังมี pending หรือ confirmed → ห้ามลบ
+    if (activeBookings.length > 0) {
+      await connection.rollback();
+      return res.status(400).json({
+        message: "ไม่สามารถลบผู้เช่าได้ เนื่องจากยังมีสัญญาที่ยังไม่ถูกยกเลิก",
+      });
+    }
+
+    // ✅ ลบผู้เช่า (tenant)
     const [result] = await connection.execute(
       "DELETE FROM users WHERE id=? AND role='tenant'",
       [id]
@@ -369,20 +378,23 @@ router.delete("/:id", authMiddleware(["owner", "staff"]), async (req, res) => {
 
     if (result.affectedRows === 0) {
       await connection.rollback();
-      return res.status(404).json({ message: "ไม่พบข้อมูลผู้เช่าที่ต้องการลบ" });
+      return res.status(404).json({
+        message: "ไม่พบข้อมูลผู้เช่าที่ต้องการลบ",
+      });
     }
 
-    // ✅ บันทึกกิจกรรม logActivity
+    // ✅ บันทึกกิจกรรม
     await logActivity(
       user.id,
       "delete_tenant",
       "user",
       id,
-      `${user.username || "ไม่ทราบผู้ใช้"} ได้ลบผู้เช่า (ID: ${id}) ออกจากระบบ`
+      `${user.username || "ไม่ทราบผู้ใช้"} ได้ลบผู้เช่า (ID: ${id})`
     );
 
     await connection.commit();
-    res.json({ message: "ลบผู้เช่าสำเร็จ และบันทึกกิจกรรมเรียบร้อย" });
+    res.json({ message: "ลบผู้เช่าสำเร็จ" });
+
   } catch (err) {
     await connection.rollback();
     console.error("DELETE TENANT ERROR:", err);

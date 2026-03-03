@@ -22,14 +22,14 @@ router.get("/", authMiddleware(["staff"]), async (req, res) => {
     // ดึงเฟอร์นิเจอร์ทั้งหมดที่เกี่ยวข้องกับ property เหล่านั้น
     const [furnitures] = await pool.execute(
       `SELECT 
-          rf.id, rf.name, rf.quantity, rf.room_id, rf.created_at, rf.updated_at,
-          r.name AS room_name, r.code AS room_code, r.property_id,
+          rf.id, rf.name, rf.quantity, rf.room_id,
+          r.name AS room_name, r.property_id,
           p.name AS property_name
        FROM room_furnitures rf
        JOIN rooms r ON rf.room_id = r.id
        JOIN properties p ON r.property_id = p.id
        WHERE r.property_id IN (${propertyIds.map(() => "?").join(",")})
-       ORDER BY p.name, r.code`,
+       ORDER BY p.name, r.name`,
       propertyIds
     );
 
@@ -61,10 +61,10 @@ router.get("/staff/properties", authMiddleware(["staff"]), async (req, res) => {
 // ดึงห้องตาม property
 router.get("/rooms/byProperty/:property_id", authMiddleware(["staff"]), async (req, res) => {
   const [rows] = await pool.execute(
-    `SELECT id, code, name 
+    `SELECT id, name 
      FROM rooms 
      WHERE property_id = ? 
-     ORDER BY code`,
+     ORDER BY name`,
     [req.params.property_id]
   );
   res.json(rows);

@@ -15,20 +15,18 @@ router.get("/", authMiddleware(["admin"]), async (req, res) => {
         b.start_date,
         b.end_date,
         b.billing_cycle,
-        b.created_at AS booking_created_at,
         u.id AS user_id,
         u.username,
         u.fullname,
         u.email,
         r.id AS room_id,
         r.name AS room_name,
-        r.code AS room_code,
         r.price_monthly,
         r.price_term,
         p.id AS property_id,
         p.name AS property_name,
         p.address AS property_address
-      FROM bookings b
+      FROM rents b
       JOIN users u ON b.user_id = u.id
       JOIN rooms r ON b.room_id = r.id
       JOIN properties p ON r.property_id = p.id
@@ -41,7 +39,7 @@ router.get("/", authMiddleware(["admin"]), async (req, res) => {
     }
 
     // เรียงจากใหม่ไปเก่า
-    query += " ORDER BY b.created_at DESC";
+    query += " ORDER BY b.start_date DESC";
     
     const [rows] = await pool.execute(query, params);
     res.json(rows);
@@ -66,7 +64,6 @@ router.get('/my', authMiddleware(['owner','staff']), async (req, res) => {
         b.status AS booking_status,
         b.start_date,
         b.end_date,
-        b.created_at AS booking_created_at,
         b.billing_cycle AS billing_cycle,
         u.id AS user_id,
         u.username,
@@ -74,13 +71,12 @@ router.get('/my', authMiddleware(['owner','staff']), async (req, res) => {
         u.email,
         r.id AS room_id,
         r.name AS room_name,
-        r.code AS room_code,
         r.price_monthly AS price_monthly,
         r.price_term AS price_term,
         p.id AS property_id,
         p.name AS property_name,
         p.address AS property_address
-      FROM bookings b
+      FROM rents b
       JOIN users u ON b.user_id = u.id
       JOIN rooms r ON b.room_id = r.id
       JOIN properties p ON r.property_id = p.id
@@ -97,7 +93,7 @@ router.get('/my', authMiddleware(['owner','staff']), async (req, res) => {
       params.push(userId);
     }
 
-    query += ` ORDER BY b.created_at DESC`;
+    query += ` ORDER BY b.start_date DESC`;
 
     // ใช้ pool.execute แทน db.query
     const [bookings] = await pool.execute(query, params);
@@ -124,7 +120,6 @@ router.get(
           b.billing_cycle,
           r.id AS room_id,
           r.name AS room_name,
-          r.code AS room_code,
           r.price_monthly,
           r.price_term,
           r.has_ac,
@@ -132,7 +127,7 @@ router.get(
           p.id AS property_id,
           p.name AS property_name,
           p.address AS property_address
-        FROM bookings b
+        FROM rents b
         JOIN rooms r ON r.id = b.room_id
         JOIN properties p ON p.id = r.property_id
         WHERE b.user_id = ?
